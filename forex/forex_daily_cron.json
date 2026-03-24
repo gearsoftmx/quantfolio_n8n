@@ -1,0 +1,462 @@
+{
+  "name": "forex_daily_cron",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const allItems = [];\n\nfor (const item of $input.all()) {\n  // 1. Obtener datos de configuración originales\n  const from_currency = item.json.from_currency;\n  const to_currency = item.json.to_currency;\n  const rate_type = item.json.rate_type;\n  \n  // Leemos la bandera 'inverse' para pasarla al resultado\n  const is_inverse = item.json.inverse === true; \n  \n  // 2. Determinar la fuente y extraer observaciones\n  let observations = [];\n  let provider_id = '';\n  \n  // Estructura de Banxico\n  if (item.json.bmx && item.json.bmx.series && item.json.bmx.series[0]) {\n    observations = item.json.bmx.series[0].datos || [];\n    provider_id = 'banxico';\n  }\n  // Estructura de FRED\n  else if (item.json.observations) {\n    observations = item.json.observations;\n    provider_id = 'fred';\n  }\n  \n  // 3. Procesar las observaciones\n  for (const obs of observations) {\n    let raw_rate = 0;\n    let rate_date = '';\n\n    // --- LÓGICA BANXICO ---\n    if (provider_id === 'banxico') {\n      if (!obs.dato || obs.dato === 'N/E') continue;\n      \n      // Limpiar comas y parsear\n      raw_rate = parseFloat(obs.dato.replace(/,/g, ''));\n      rate_date = obs.fecha; \n      \n      // Normalizar Fecha (DD/MM/YYYY -> YYYY-MM-DD)\n      if (rate_date.includes('/')) {\n        const [d, m, y] = rate_date.split('/');\n        rate_date = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;\n      }\n    } \n    \n    // --- LÓGICA FRED ---\n    else if (provider_id === 'fred') {\n      if (!obs.value || obs.value === '.') continue;\n      \n      raw_rate = parseFloat(obs.value);\n      rate_date = obs.date; \n    }\n\n    // 4. Validar número\n    if (isNaN(raw_rate) || raw_rate <= 0) continue;\n\n    // 5. GUARDAR RESULTADO (SIN INVERTIR)\n    // Se guarda el dato crudo y las etiquetas originales.\n    allItems.push({\n      json: {\n        from_currency: from_currency,\n        to_currency: to_currency,\n        rate_type: rate_type,\n        provider_id: provider_id,\n        rate_date: rate_date,\n        \n        rate: raw_rate,          // Valor original (ej. 150.00 para JPY)\n        is_inverse: is_inverse   // Bandera para saber que este dato es \"inverso\"\n      }\n    });\n  }\n}\n\nconsole.log(`Total items procesados: ${allItems.length}`);\n\nreturn allItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        352
+      ],
+      "id": "1a88fc24-51d2-4377-9b9a-48218219d888",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "forex",
+          "mode": "list",
+          "cachedResultName": "forex"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rate",
+          "mode": "list",
+          "cachedResultName": "rate"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rate_date": "={{ $json.rate_date }}",
+            "rate": "={{ $json.rate }}",
+            "provider_id": "={{ $json.provider_id }}",
+            "from_currency": "={{ $json.from_currency }}",
+            "to_currency": "={{ $json.to_currency }}",
+            "rate_type": "={{ $json.rate_type }}",
+            "is_inverse": "={{ $json.is_inverse }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_currency",
+              "displayName": "from_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "to_currency",
+              "displayName": "to_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_type",
+              "displayName": "rate_type",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_date",
+              "displayName": "rate_date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate",
+              "displayName": "rate",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_inverse",
+              "displayName": "is_inverse",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1088,
+        352
+      ],
+      "id": "34a47315-0681-42cd-9c8c-edbc23be7aea",
+      "name": "Insert rows in a table1",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Configuración FRED\nconst FRED_API_KEY = 'e28c7bf00d9418ff0e3668963ea8a915'; \nconst HISTORIC_START = '1990-01-01'; // Fecha por defecto si la moneda es nueva\n\n// 2. Definimos las monedas que QUEREMOS buscar (Tu Mapa Maestro)\nconst FRED_TARGETS = [\n  // Pares Inversos (Moneda -> USD)\n  { id: 'DEXJPUS', from: 'USD', to: 'JPY', type: 'SPOT', inverse: true },\n  { id: 'DEXSZUS', from: 'USD', to: 'CHF', type: 'SPOT', inverse: true },\n  { id: 'DEXCAUS', from: 'USD', to: 'CAD', type: 'SPOT', inverse: true },\n  { id: 'DEXCHUS', from: 'USD', to: 'CNY', type: 'SPOT', inverse: true },\n  { id: 'DEXBZUS', from: 'USD', to: 'BRL', type: 'SPOT', inverse: true },\n  { id: 'DEXKOUS', from: 'USD', to: 'KRW', type: 'SPOT', inverse: true },\n  \n  // Pares Directos (Euro, Libra, Australia)\n  { id: 'DEXUSEU', from: 'EUR', to: 'USD', type: 'SPOT', inverse: false },\n  { id: 'DEXUSUK', from: 'GBP', to: 'USD', type: 'SPOT', inverse: false },\n  { id: 'DEXUSAL', from: 'AUD', to: 'USD', type: 'SPOT', inverse: false },\n  \n  // MXN en Fred (Opcional, si lo quieres comparar con Banxico)\n  { id: 'DEXMXUS', from: 'USD', to: 'MXN', type: 'SPOT', inverse: true }\n];\n\n// 3. Fechas\nconst today = DateTime.now().setZone('America/Mexico_City');\nconst endDateStr = today.toFormat('yyyy-MM-dd');\n\n// 4. CREAR DICCIONARIO DE LA BD\n// Convertimos el input de SQL en un objeto rápido de buscar\n// Clave: \"USD_JPY_SPOT\", Valor: \"2026-02-13\"\nconst dbIndex = {};\nfor (const item of $input.all()) {\n    const key = `${item.json.from_currency}_${item.json.to_currency}_${item.json.rate_type}`;\n    dbIndex[key] = item.json.last_db_date;\n}\n\nconst results = [];\n\n// 5. BUCLE PRINCIPAL (Iteramos sobre el MAPA, no sobre el Input)\nfor (const target of FRED_TARGETS) {\n\n    // Generamos la clave de búsqueda\n    const key = `${target.from}_${target.to}_${target.type}`;\n    const last_db_date = dbIndex[key];\n\n    // Calculamos Start Date\n    let startDateStr = HISTORIC_START;\n\n    if (last_db_date) {\n        // Si existe en BD, calculamos día siguiente\n        const lastDateObj = DateTime.fromISO(last_db_date);\n        if (lastDateObj.isValid) {\n            startDateStr = lastDateObj.plus({ days: 1 }).toFormat('yyyy-MM-dd');\n        }\n    } else {\n        console.log(`🆕 Moneda nueva detectada: ${target.id}. Descargando historial completo.`);\n    }\n\n    // Validación de \"Ya estamos al día\"\n    if (startDateStr > endDateStr) {\n        // console.log(`✅ ${target.id} al día.`);\n        continue;\n    }\n\n    // Agregar a la lista de descargas\n    results.push({\n        json: {\n            series_id: target.id,\n            start_date: startDateStr,\n            end_date: endDateStr,\n            api_key: FRED_API_KEY,\n            from_currency: target.from,\n            to_currency: target.to,\n            rate_type: target.type,\n            inverse: target.inverse,\n            provider: 'fred'\n        }\n    });\n}\n\nconsole.log(`Total FRED a descargar: ${results.length}`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        464
+      ],
+      "id": "957ad91a-4e76-4677-a0e3-10036d779e9d",
+      "name": "parametros fred"
+    },
+    {
+      "parameters": {
+        "url": "https://api.stlouisfed.org/fred/series/observations",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={\n  \"series_id\": \"{{ $json.series_id }}\",\n  \"api_key\": \"{{ $json.api_key }}\",\n  \"file_type\": \"json\",\n  \"observation_start\": \"{{ $json.start_date }}\",\n  \"observation_end\": \"{{ $json.end_date }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        480
+      ],
+      "id": "2febb5f9-2972-4890-b2ca-6bc21f787d45",
+      "name": "request fred",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "=https://www.banxico.org.mx/SieAPIRest/service/v1/series/{{ $json.series_id }}/datos/{{ $json.start_date }}/{{ $json.end_date }}?token={{ $json.api_key }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        352
+      ],
+      "id": "b7b4c1b2-1c93-45c6-afaf-d7b8d4c62c71",
+      "name": "request banxico",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "advanced": true,
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "series_id",
+              "field2": "bmx.series[0].idSerie"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        272
+      ],
+      "id": "6734e871-b43f-47a1-9bf9-08e7429b6fdd",
+      "name": "merge banxico"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        464
+      ],
+      "id": "678e3c5b-eeca-400d-a912-5ef186775b1e",
+      "name": "merge fred"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 18
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -288,
+        336
+      ],
+      "id": "b2c3eafc-af11-4f31-a637-b7aaf8a4e566",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  from_currency,\n  to_currency,\n  rate_type, -- <--- ESTO ES INDISPENSABLE\n  TO_CHAR(MAX(rate_date), 'YYYY-MM-DD') as last_db_date\nFROM \n  forex.rate \nWHERE \n  provider_id = 'banxico'\nGROUP BY \n  from_currency,\n  to_currency,\n  rate_type;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -48,
+        256
+      ],
+      "id": "ca3ace4c-f3da-49c8-97e7-31a83adba191",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Configuración General\nconst API_KEY = '72a341c34753f332e7d4e13864a3affa9693e4199687156ed8b544ba7677acfd'; \n\n// 2. EL MAPA MAESTRO (Indispensable para recuperar los IDs que faltan en el SQL)\nconst SERIES_MAP = [\n  // --- BANXICO ---\n  { id: 'SF43718',  from: 'USD', to: 'MXN', type: 'FIX' },\n  { id: 'SF60653',  from: 'USD', to: 'MXN', type: 'SPOT' },\n  { id: 'SF343410', from: 'USD', to: 'MXN', type: 'CLOSE' },\n  { id: 'SF46410',  from: 'EUR', to: 'MXN', type: 'FIX' },\n  { id: 'SF46406',  from: 'JPY', to: 'MXN', type: 'FIX' },\n  { id: 'SF46407',  from: 'GBP', to: 'MXN', type: 'FIX' },\n  { id: 'SF60632',  from: 'CAD', to: 'MXN', type: 'FIX' },\n  { id: 'SP68257',  from: 'UDI', to: 'MXN', type: 'INFLATION' }, // Ojo: En tu imagen dice \"INFLATION\"\n  { id: 'SF290383', from: 'CNY', to: 'MXN', type: 'FIX' },\n  \n  // --- FRED (Por si acaso vienen en el SQL) ---\n  { id: 'DEXUSEU', from: 'EUR', to: 'USD', type: 'SPOT' },\n  { id: 'DEXJPUS', from: 'USD', to: 'JPY', type: 'SPOT' },\n  { id: 'DEXSZUS', from: 'USD', to: 'CHF', type: 'SPOT' },\n  { id: 'DEXCAUS', from: 'USD', to: 'CAD', type: 'SPOT' },\n  { id: 'DEXUSUK', from: 'GBP', to: 'USD', type: 'SPOT' },\n  { id: 'DEXUSAL', from: 'AUD', to: 'USD', type: 'SPOT' },\n  { id: 'DEXCHUS', from: 'USD', to: 'CNY', type: 'SPOT' },\n  { id: 'DEXBZUS', from: 'USD', to: 'BRL', type: 'SPOT' },\n  { id: 'DEXKOUS', from: 'USD', to: 'KRW', type: 'SPOT' }\n];\n\n// 3. Definimos \"HOY\"\nconst today = DateTime.now().setZone('America/Mexico_City');\nconst endDateStr = today.toFormat('yyyy-MM-dd');\n\nconsole.log(`--- INICIO --- Fecha objetivo: ${endDateStr}`);\n\nconst results = [];\n\n// 4. Procesamos la entrada (Input del SQL)\nfor (const item of $input.all()) {\n  \n  // Extraemos datos tal cual vienen de tu imagen de SQL\n  const db_from = item.json.from_currency;\n  const db_to   = item.json.to_currency;\n  const db_type = item.json.rate_type;\n  let last_db_date = item.json.last_db_date;\n\n  // --- PASO CRÍTICO: RECUPERAR EL ID ---\n  // Buscamos en el mapa qué serie coincide\n  const configMatch = SERIES_MAP.find(s => \n      s.from === db_from && \n      s.to === db_to && \n      s.type === db_type\n  );\n\n  if (!configMatch) {\n      // Si no está en el mapa, lo saltamos y avisamos\n      console.log(`⚠️ ID Desconocido para: ${db_from}/${db_to} tipo ${db_type}`);\n      continue;\n  }\n\n  const series_id = configMatch.id;\n\n  // --- REGLA DE ORO: SI NO HAY FECHA, NO HACEMOS NADA ---\n  if (!last_db_date) {\n      console.log(`🛑 OMITIDO: ${series_id} no tiene fecha en BD. Se ignora carga histórica.`);\n      continue; \n  }\n\n  // --- CÁLCULO DE FECHAS ---\n  let startDateStr = '';\n  let lastDateObj;\n\n  // Manejo robusto de fechas (String vs Date Object)\n  if (typeof last_db_date === 'object') {\n      lastDateObj = DateTime.fromJSDate(last_db_date);\n  } else {\n      lastDateObj = DateTime.fromISO(last_db_date); \n      if (!lastDateObj.isValid) lastDateObj = DateTime.fromSQL(last_db_date);\n  }\n\n  if (lastDateObj.isValid) {\n      // Pedimos desde el día siguiente\n      startDateStr = lastDateObj.plus({ days: 1 }).toFormat('yyyy-MM-dd');\n  } else {\n      console.log(`⚠️ Fecha inválida en BD: ${last_db_date}`);\n      continue;\n  }\n\n  // Validación: Si la fecha de inicio es mayor o igual a hoy, ya estamos al día\n  // (Nota: > endDateStr evita pedir datos futuros, >= evita pedir el día de hoy si ya pasó el corte, ajusta según necesidad)\n  if (startDateStr > endDateStr) {\n    console.log(`✅ AL DÍA: ${series_id}. (BD: ${last_db_date})`);\n    continue; \n  }\n\n  // --- DETECTAR PROVEEDOR ---\n  let provider = 'banxico'; // Por defecto\n  if (series_id.startsWith('DEX')) provider = 'fred';\n\n  // --- DETERMINAR INVERSE ---\n  // Banxico siempre false. FRED depende de la moneda (lo simplificamos aquí o usamos configMatch si agregas el campo inverse al mapa)\n  // Para simplificar, pasamos lo básico y dejamos que el procesador final maneje detalles si es necesario,\n  // pero lo ideal es agregarlo al MAPA arriba.\n  let is_inverse = false;\n  if (provider === 'fred') {\n      // Lista rápida de inversos comunes en FRED\n      if (['JPY', 'CHF', 'CAD', 'CNY', 'BRL', 'KRW', 'MXN'].includes(db_to)) is_inverse = true;\n  }\n\n  console.log(`🔄 ACTUALIZANDO: ${series_id} (${startDateStr} -> ${endDateStr})`);\n\n  results.push({\n    json: {\n      series_id: series_id,\n      start_date: startDateStr,\n      end_date: endDateStr,\n      \n      api_key: API_KEY,\n      from_currency: db_from,\n      to_currency: db_to,\n      rate_type: db_type,\n      inverse: is_inverse,\n      provider: provider\n    }\n  });\n}\n\nconsole.log(`Total a descargar: ${results.length}`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        256
+      ],
+      "id": "ab7b4678-9592-4f52-a692-7fb1c26b503c",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n  from_currency,\n  to_currency,\n  rate_type, -- <--- ESTO ES INDISPENSABLE\n  TO_CHAR(MAX(rate_date), 'YYYY-MM-DD') as last_db_date\nFROM \n  forex.rate \nWHERE \n  provider_id = 'fred'\nGROUP BY \n  from_currency,\n  to_currency,\n  rate_type;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -48,
+        464
+      ],
+      "id": "2ca3488d-e984-46a3-bc0d-f5323d993dff",
+      "name": "Execute a SQL query1",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parametros fred": {
+      "main": [
+        [
+          {
+            "node": "request fred",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "merge fred",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "request fred": {
+      "main": [
+        [
+          {
+            "node": "merge fred",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "request banxico": {
+      "main": [
+        [
+          {
+            "node": "merge banxico",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "merge banxico": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge fred": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "request banxico",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "merge banxico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query1": {
+      "main": [
+        [
+          {
+            "node": "parametros fred",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "timeSavedMode": "fixed",
+    "timezone": "America/Mexico_City",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate"
+  },
+  "versionId": "aeb18227-4c07-4a50-846e-ebccea0017a0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fc1afefbcb19bc0ba7fa20b30ab2cee5dab39d8896031153292976c74c1d15f9"
+  },
+  "id": "2C8f7uTHhGEnYyYB",
+  "tags": []
+}

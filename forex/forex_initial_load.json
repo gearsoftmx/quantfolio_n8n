@@ -1,0 +1,735 @@
+{
+  "name": "forex_initial_load",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -96,
+        336
+      ],
+      "id": "5d02060f-b07c-478f-9db3-b3f45f52d276",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://www.banxico.org.mx/SieAPIRest/service/v1/series/SF46410/datos/1995-01-01/2026-02-14?token=72a341c34753f332e7d4e13864a3affa9693e4199687156ed8b544ba7677acfd",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        96,
+        -464
+      ],
+      "id": "086590ee-24b1-4e16-9581-cd7620a596db",
+      "name": "HTTP Request",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "forex",
+          "mode": "list",
+          "cachedResultName": "forex"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rate",
+          "mode": "list",
+          "cachedResultName": "rate"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rate_date": "={{ $('HTTP Request').item.json.bmx.series[0].datos[2].fecha }}",
+            "rate": "={{ $('HTTP Request').item.json.bmx.series[0].datos[1].dato }}",
+            "provider_id": "={{ $json.provider_id }}",
+            "from_currency": "={{ $json.from_currency }}",
+            "to_currency": "={{ $json.to_currency }}",
+            "rate_type": "={{ $json.rate_type }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_currency",
+              "displayName": "from_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "to_currency",
+              "displayName": "to_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_type",
+              "displayName": "rate_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_date",
+              "displayName": "rate_date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate",
+              "displayName": "rate",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        496,
+        -464
+      ],
+      "id": "b91bc33f-0222-4f07-8249-b45fbf62e100",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "function convertirFecha(fechaBanxico) {\n  const [dia, mes, año] = fechaBanxico.split('/');\n  return `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;\n}\n\nconst allItems = [];\n\nfor (const item of $input.all()) {\n  const series = item.json.bmx?.series?.[0];\n  \n  if (!series || !series.datos) {\n    continue;\n  }\n  \n  for (const dato of series.datos) {\n    try {\n      allItems.push({\n        json: {\n          from_currency: 'MXN',\n          to_currency: 'EUR',\n          rate_type: 'FIX',\n          provider_id: 'banxico',\n          rate_date: convertirFecha(dato.fecha),\n          rate: parseFloat(dato.dato)\n        }\n      });\n    } catch (error) {\n      console.error('Error procesando dato:', dato, error);\n    }\n  }\n}\n\nreturn allItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        -464
+      ],
+      "id": "6a47311c-d848-4235-9f85-16eb3be1c643",
+      "name": "Code in JavaScript",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = [];\n\nfor (const item of $input.all()) {\n  // 1. Obtener datos de configuración originales\n  const from_currency = item.json.from_currency;\n  const to_currency = item.json.to_currency;\n  const rate_type = item.json.rate_type;\n  \n  // Leemos la bandera 'inverse' para pasarla al resultado\n  const is_inverse = item.json.inverse === true; \n  \n  // 2. Determinar la fuente y extraer observaciones\n  let observations = [];\n  let provider_id = '';\n  \n  // Estructura de Banxico\n  if (item.json.bmx && item.json.bmx.series && item.json.bmx.series[0]) {\n    observations = item.json.bmx.series[0].datos || [];\n    provider_id = 'banxico';\n  }\n  // Estructura de FRED\n  else if (item.json.observations) {\n    observations = item.json.observations;\n    provider_id = 'fred';\n  }\n  \n  // 3. Procesar las observaciones\n  for (const obs of observations) {\n    let raw_rate = 0;\n    let rate_date = '';\n\n    // --- LÓGICA BANXICO ---\n    if (provider_id === 'banxico') {\n      if (!obs.dato || obs.dato === 'N/E') continue;\n      \n      // Limpiar comas y parsear\n      raw_rate = parseFloat(obs.dato.replace(/,/g, ''));\n      rate_date = obs.fecha; \n      \n      // Normalizar Fecha (DD/MM/YYYY -> YYYY-MM-DD)\n      if (rate_date.includes('/')) {\n        const [d, m, y] = rate_date.split('/');\n        rate_date = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;\n      }\n    } \n    \n    // --- LÓGICA FRED ---\n    else if (provider_id === 'fred') {\n      if (!obs.value || obs.value === '.') continue;\n      \n      raw_rate = parseFloat(obs.value);\n      rate_date = obs.date; \n    }\n\n    // 4. Validar número\n    if (isNaN(raw_rate) || raw_rate <= 0) continue;\n\n    // 5. GUARDAR RESULTADO (SIN INVERTIR)\n    // Se guarda el dato crudo y las etiquetas originales.\n    allItems.push({\n      json: {\n        from_currency: from_currency,\n        to_currency: to_currency,\n        rate_type: rate_type,\n        provider_id: provider_id,\n        rate_date: rate_date,\n        \n        rate: raw_rate,          // Valor original (ej. 150.00 para JPY)\n        is_inverse: is_inverse   // Bandera para saber que este dato es \"inverso\"\n      }\n    });\n  }\n}\n\nconsole.log(`Total items procesados: ${allItems.length}`);\n\nreturn allItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        848,
+        352
+      ],
+      "id": "4e187b74-6fd2-4131-91b7-8b2e1f1979aa",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "forex",
+          "mode": "list",
+          "cachedResultName": "forex"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rate",
+          "mode": "list",
+          "cachedResultName": "rate"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rate_date": "={{ $json.rate_date }}",
+            "rate": "={{ $json.rate }}",
+            "provider_id": "={{ $json.provider_id }}",
+            "from_currency": "={{ $json.from_currency }}",
+            "to_currency": "={{ $json.to_currency }}",
+            "rate_type": "={{ $json.rate_type }}",
+            "is_inverse": "={{ $json.is_inverse }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_currency",
+              "displayName": "from_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "to_currency",
+              "displayName": "to_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_type",
+              "displayName": "rate_type",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_date",
+              "displayName": "rate_date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate",
+              "displayName": "rate",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_inverse",
+              "displayName": "is_inverse",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1024,
+        352
+      ],
+      "id": "d37fee98-afa0-4b53-a3f4-ce816494d93c",
+      "name": "Insert rows in a table1",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allItems = [];\n\nfor (const item of $input.all()) {\n  // Obtener datos del item actual\n  const from_currency = item.json.from_currency;\n  const to_currency = item.json.to_currency;\n  const rate_type = item.json.rate_type;\n  \n  // Obtener series de Banxico o FRED según la estructura\n  let observations = [];\n  \n  // Estructura de Banxico\n  if (item.json.bmx && item.json.bmx.series && item.json.bmx.series[0]) {\n    observations = item.json.bmx.series[0].datos || [];\n  }\n  // Estructura de FRED\n  else if (item.json.observations) {\n    observations = item.json.observations;\n  }\n  \n  console.log(`Processing ${from_currency}/${to_currency} (${rate_type}): ${observations.length} observations`);\n  \n  for (const obs of observations) {\n    // Para Banxico\n    if (obs.dato) {\n      if (obs.dato === 'N/E' || !obs.dato) continue;\n      \n      const rate = parseFloat(obs.dato.replace(/,/g, ''));\n      if (isNaN(rate) || rate <= 0) continue;\n      \n      // Normalizar fecha de Banxico\n      let rate_date = obs.fecha;\n      \n      // Formato YYYYMMDD -> YYYY-MM-DD\n      if (/^\\d{8}$/.test(rate_date)) {\n        rate_date = `${rate_date.slice(0,4)}-${rate_date.slice(4,6)}-${rate_date.slice(6,8)}`;\n      }\n      // Formato DD/MM/YYYY -> YYYY-MM-DD\n      else if (rate_date.includes('/')) {\n        const [d, m, y] = rate_date.split('/');\n        rate_date = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;\n      }\n      \n      allItems.push({\n        json: {\n          from_currency: from_currency,\n          to_currency: to_currency,\n          rate_type: rate_type,\n          provider_id: 'banxico',\n          rate_date: rate_date,\n          rate: rate\n        }\n      });\n    }\n    // Para FRED\n    else if (obs.value) {\n      if (obs.value === '.' || !obs.value) continue;\n      \n      const rate = parseFloat(obs.value);\n      if (isNaN(rate) || rate <= 0) continue;\n      \n      allItems.push({\n        json: {\n          from_currency: from_currency,\n          to_currency: to_currency,\n          rate_type: rate_type,\n          provider_id: 'fred',\n          rate_date: obs.date,  // FRED ya viene en YYYY-MM-DD\n          rate: rate\n        }\n      });\n    }\n  }\n}\n\nconsole.log(`Total items procesados: ${allItems.length}`);\n\nreturn allItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        144
+      ],
+      "id": "88daeae8-8700-42bb-9305-adf40ff1d11e",
+      "name": "Code in JavaScript4",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "forex",
+          "mode": "list",
+          "cachedResultName": "forex"
+        },
+        "table": {
+          "__rl": true,
+          "value": "rate",
+          "mode": "list",
+          "cachedResultName": "rate"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "rate_date": "={{ $json.rate_date }}",
+            "rate": "={{ $json.rate }}",
+            "provider_id": "={{ $json.provider_id }}",
+            "from_currency": "={{ $json.from_currency }}",
+            "to_currency": "={{ $json.to_currency }}",
+            "rate_type": "={{ $json.rate_type }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "from_currency",
+              "displayName": "from_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "to_currency",
+              "displayName": "to_currency",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_type",
+              "displayName": "rate_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider_id",
+              "displayName": "provider_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate_date",
+              "displayName": "rate_date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rate",
+              "displayName": "rate",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1776,
+        144
+      ],
+      "id": "0633d420-b8e1-412d-a295-e7ecbd38735c",
+      "name": "Insert rows in a table2",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const API_KEY = '72a341c34753f332e7d4e13864a3affa9693e4199687156ed8b544ba7677acfd';\nconst START_DATE = '1990-01-01'; // Ojo: Banxico tiene datos desde 1954 para USD, pero otras son más recientes\nconst END_DATE = '2026-02-15';\n\nconst series_config = {\n  // --- DÓLAR (USD) ---\n  // Banxico da \"Pesos por Dólar\". No se invierte.\n  'SF43718': { from: 'USD', to: 'MXN', rate_type: 'FIX', inverse: false },\n  'SF60653': { from: 'USD', to: 'MXN', rate_type: 'SPOT', inverse: false },\n  'SF343410': { from: 'USD', to: 'MXN', rate_type: 'CLOSE', inverse: false },\n\n  // --- OTRAS DIVISAS ---\n  // Banxico da \"Pesos por Euro\", \"Pesos por Yen\", etc. No se invierte.\n  'SF46410': { from: 'EUR', to: 'MXN', rate_type: 'FIX', inverse: false },\n  'SF46406': { from: 'JPY', to: 'MXN', rate_type: 'FIX', inverse: false }, // Dato: ~0.13 MXN\n  'SF46407': { from: 'GBP', to: 'MXN', rate_type: 'FIX', inverse: false },\n  'SF60632': { from: 'CAD', to: 'MXN', rate_type: 'FIX', inverse: false },\n  \n  // --- UDIs e INFLACIÓN ---\n  // Banxico da \"Pesos por UDI\". No se invierte.\n  'SP68257': { from: 'UDI', to: 'MXN', rate_type: 'INFLATION', inverse: false },\n  \n  // --- OTRAS ---\n  'SF290383': { from: 'CNY', to: 'MXN', rate_type: 'FIX', inverse: false }\n};\n\nreturn Object.entries(series_config).map(([series_id, config]) => ({\n  json: {\n    series_id: series_id,\n    api_key: API_KEY,\n    start_date: START_DATE,\n    end_date: END_DATE,\n    from_currency: config.from,\n    to_currency: config.to,\n    rate_type: config.rate_type,\n    inverse: config.inverse // Aquí pasamos el false explícitamente\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        256
+      ],
+      "id": "2eeacbbd-0261-459b-9baf-d348882318b0",
+      "name": "parametros banxico"
+    },
+    {
+      "parameters": {
+        "jsCode": "const API_KEY = 'e28c7bf00d9418ff0e3668963ea8a915';\nconst START_DATE = '1990-01-01'; \nconst END_DATE = '2026-02-15';\n\nconst series_config = {\n  // --- GRUPO 1: El dato ya viene en Dólares (USD por moneda) ---\n  // inverse: false\n  'DEXUSEU': { from: 'EUR', to: 'USD', rate_type: 'SPOT', inverse: false }, // Euro\n  'DEXUSUK': { from: 'GBP', to: 'USD', rate_type: 'SPOT', inverse: false }, // Libra\n  'DEXUSAL': { from: 'AUD', to: 'USD', rate_type: 'SPOT', inverse: false }, // Australia\n\n  // --- GRUPO 2: El dato viene en \"Moneda por Dólar\" ---\n  // inverse: true (1 / rate)\n  'DEXJPUS': { from: 'USD', to: 'JPY', rate_type: 'SPOT', inverse: true }, // Yen\n  'DEXSZUS': { from: 'USD', to: 'CHF', rate_type: 'SPOT', inverse: true }, // Suiza\n  'DEXCAUS': { from: 'USD', to: 'CAD', rate_type: 'SPOT', inverse: true }, // Canadá\n  'DEXCHUS': { from: 'USD', to: 'CNY', rate_type: 'SPOT', inverse: true }, // China\n  'DEXBZUS': { from: 'USD', to: 'BRL', rate_type: 'SPOT', inverse: true }, // Brasil\n  'DEXKOUS': { from: 'USD', to: 'KRW', rate_type: 'SPOT', inverse: true }  // Corea\n};\n\nreturn Object.entries(series_config).map(([series_id, config]) => ({\n  json: {\n    series_id: series_id,\n    api_key: API_KEY,\n    start_date: START_DATE,\n    end_date: END_DATE,\n    from_currency: config.from,\n    to_currency: config.to,\n    rate_type: config.rate_type, // Ahora dirá 'SPOT'\n    inverse: config.inverse \n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        448
+      ],
+      "id": "41a27c4b-aa48-4fad-941c-c31d85f67564",
+      "name": "parametros fred"
+    },
+    {
+      "parameters": {
+        "url": "https://api.stlouisfed.org/fred/series/observations",
+        "sendQuery": true,
+        "specifyQuery": "json",
+        "jsonQuery": "={\n  \"series_id\": \"{{ $json.series_id }}\",\n  \"api_key\": \"{{ $json.api_key }}\",\n  \"file_type\": \"json\",\n  \"observation_start\": \"{{ $json.start_date }}\",\n  \"observation_end\": \"{{ $json.end_date }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        480
+      ],
+      "id": "a0a5ebf1-8138-4b91-ac93-f5255febd0cf",
+      "name": "request fred",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "url": "=https://www.banxico.org.mx/SieAPIRest/service/v1/series/{{ $json.series_id }}/datos/{{ $json.start_date }}/{{ $json.end_date }}?token={{ $json.api_key }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        368,
+        352
+      ],
+      "id": "166f558b-1db0-4d18-9351-6557a51cc610",
+      "name": "request banxico",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "advanced": true,
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "series_id",
+              "field2": "bmx.series[0].idSerie"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        272
+      ],
+      "id": "e85ac9d3-1ffc-4527-8e6e-6c5e82574d1b",
+      "name": "merge banxico"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        464
+      ],
+      "id": "6b144f5a-71a9-42c9-9b78-378146277e99",
+      "name": "merge fred"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "parametros fred",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "parametros banxico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parametros banxico": {
+      "main": [
+        [
+          {
+            "node": "request banxico",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "merge banxico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "parametros fred": {
+      "main": [
+        [
+          {
+            "node": "request fred",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "merge fred",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "request fred": {
+      "main": [
+        [
+          {
+            "node": "merge fred",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "request banxico": {
+      "main": [
+        [
+          {
+            "node": "merge banxico",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "merge banxico": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "merge fred": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timeSavedMode": "fixed",
+    "timezone": "America/Mexico_City",
+    "callerPolicy": "workflowsFromSameOwner",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "d36c0cbb-7592-4a36-aeb7-83fb4612408b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fc1afefbcb19bc0ba7fa20b30ab2cee5dab39d8896031153292976c74c1d15f9"
+  },
+  "id": "aiJ4gaUglvkTBfXB",
+  "tags": []
+}
