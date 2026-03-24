@@ -1,0 +1,1574 @@
+{
+  "name": "Quantfolio — Sync Assets 2",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const axios = require('axios');\n\nasync function fetchTickers(page) {\n  const url = `https://en.wikipedia.org/w/api.php?action=parse&page=${page}&prop=wikitext&format=json`;\n  const res  = await axios.get(url, { headers: { 'User-Agent': 'Quantfolio/1.0 n8n-workflow' } });\n  const text = res.data?.parse?.wikitext?.['*'] ?? '';\n  const matches = [...text.matchAll(/\\\\|\\\\s*([A-Z]{1,5})\\\\s*\\\\|\\\\|/g)];\n  return [...new Set(matches.map(m => m[1]))];\n}\n\nconst ETF_TICKERS = [\n  'SPY','QQQ','IWM','EFA','EEM','VTI','VEA','VWO','AGG','BND',\n  'GLD','SLV','USO','TLT','HYG','LQD','VNQ','XLF','XLK','XLE',\n  'IEMG','ACWI','URTH','MCHI','EWJ','EWZ','EWW','HEWW'\n];\n\nconst BMV_TICKERS = [\n  'BIMBOA.MX','AMXL.MX','WALMEX.MX','FEMSAUBD.MX','GMEXICOB.MX',\n  'GFINBURO.MX','CEMEXCPO.MX','TLEVISACPO.MX','GCARSOA1.MX','ALSEA.MX',\n  'BOLSAA.MX','GRUMAB.MX','LIVEPOLC-1.MX','PINFRA.MX','GAPB.MX'\n];\n\nconst sp500  = await fetchTickers('List_of_S%26P_500_companies');\nconst nasdaq = await fetchTickers('Nasdaq-100');\n\nconst all = [\n  ...sp500.map(t  => ({ ticker: t, source: 'sp500_wikipedia' })),\n  ...nasdaq.map(t => ({ ticker: t, source: 'nasdaq100_wikipedia' })),\n  ...ETF_TICKERS.map(t => ({ ticker: t, source: 'etf_curated' })),\n  ...BMV_TICKERS.map(t => ({ ticker: t, source: 'bmv_curated' }))\n];\n\nconst seen   = new Set();\nconst unique = all.filter(({ ticker }) => {\n  if (seen.has(ticker)) return false;\n  seen.add(ticker);\n  return true;\n});\n\nreturn unique.map(t => ({ json: { ...t, provider: 'yahoo_finance' } }));"
+      },
+      "name": "Build — All Tickers",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8160,
+        3984
+      ],
+      "id": "bd867353-1d1c-4278-a43a-f023e8aa9f44",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "=http://192.168.1.74:8001/info/{{ $json.ticker }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "yFinance Service — Fetch Info",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -7568,
+        4016
+      ],
+      "id": "42517d25-450d-48eb-b444-c20b29d1612d",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const d      = $input.item.json;\nconst ticker = d.ticker;\n\nif (d.error) throw new Error(`yfinance no encontro '${ticker}': ${d.error}`);\n\nconst EXCHANGE_MAP = {\n  NMS: 'NASDAQ', NGM: 'NASDAQ',\n  NYQ: 'NYSE',   MEX: 'BMV',\n  LSE: 'LSE',    BATS: 'BATS'\n};\nconst exchange = EXCHANGE_MAP[d.exchange?.toUpperCase()] ?? d.exchange?.toUpperCase() ?? null;\n\nconst CLASS_MAP = {\n  EQUITY: 'EQUITY', ETF: 'ETF', MUTUALFUND: 'FUND',\n  CRYPTOCURRENCY: 'CRYPTO', FUTURE: 'COMMODITY'\n};\nconst assetClass   = CLASS_MAP[d.quote_type?.toUpperCase()] ?? null;\nconst tickerSymbol = ticker.split('.')[0].toUpperCase();\n\nconst payload = {\n  name:          d.long_name ?? null,\n  asset_class:   assetClass,\n  sector:        d.sector ?? null,\n  isin:          d.isin ?? null,\n  base_currency: (d.currency ?? '').toUpperCase() || null,\n  listed_at:     null,\n  exchange,\n  ticker:        tickerSymbol,\n  currency:      (d.currency ?? '').toUpperCase() || null,\n  is_primary:    true,\n  provider:      'yahoo_finance',\n  _raw_ticker:   ticker\n};\n\nif (!payload.name || !payload.asset_class || !payload.base_currency || !payload.exchange) {\n  throw new Error(`Datos incompletos para '${ticker}': ${JSON.stringify(payload)}`);\n}\n\nreturn { json: payload };"
+      },
+      "name": "Normalize & Map",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7424,
+        4032
+      ],
+      "id": "443db767-eac4-4f4b-af62-bbfae372caa3",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.asset_class }}",
+              "operation": "isNotEmpty"
+            },
+            {
+              "value1": "={{ $json.exchange }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "name": "Guard — Valid Payload?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -7152,
+        4032
+      ],
+      "id": "52c19352-58ab-4c11-8a7a-9a94131a11ad",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.QUANTFOLIO_API_URL }}/assets",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "name",
+              "value": "={{ $('Normalize & Map').item.json.name }}"
+            },
+            {
+              "name": "asset_class",
+              "value": "={{ $('Normalize & Map').item.json.asset_class }}"
+            },
+            {
+              "name": "sector",
+              "value": "={{ $('Normalize & Map').item.json.sector }}"
+            },
+            {
+              "name": "base_currency",
+              "value": "={{ $('Normalize & Map').item.json.base_currency }}"
+            },
+            {
+              "name": "exchange",
+              "value": "={{ $('Normalize & Map').item.json.exchange }}"
+            },
+            {
+              "name": "ticker",
+              "value": "={{ $('Normalize & Map').item.json.ticker }}"
+            },
+            {
+              "name": "currency",
+              "value": "={{ $('Normalize & Map').item.json.currency }}"
+            },
+            {
+              "name": "is_primary",
+              "value": "={{ $('Normalize & Map').item.json.is_primary }}"
+            },
+            {
+              "name": "provider",
+              "value": "={{ $('Normalize & Map').item.json.provider }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "API — POST /assets (Create)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -6560,
+        4064
+      ],
+      "id": "e39fa430-7bfd-4358-862c-aa3041f63d0f",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $input.item.json;\nreturn {\n  json: {\n    status: 'skipped',\n    reason: 'invalid_payload',\n    ticker: item._raw_ticker ?? 'unknown'\n  }\n};"
+      },
+      "name": "Log — Skipped Invalid",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6864,
+        4064
+      ],
+      "id": "e79328c6-0700-46f7-9dbf-34ae5d579b57",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO sync_logs (id, module, status, detail, synced_at) VALUES (gen_random_uuid(), 'assets', '{{ ($json.status ?? 'success') }}', '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb, NOW());",
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -6336,
+        3824
+      ],
+      "id": "35d24ddd-985b-4dc8-8597-c214faf138bc",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1"
+            }
+          ]
+        }
+      },
+      "name": "Trigger — Every Monday 6am1",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -8688,
+        3952
+      ],
+      "id": "b1ce8ca8-ef03-4e51-8831-0f3b39925d86",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Inputs externos ───────────────────────────────────────────\nconst sp500csv   = $('HTTP Request — S&P 500').first().json.data;\nconst nysecsv    = $('HTTP Request — NYSE').first().json.data;\nconst nasdaqcsv  = $('HTTP Request — NASDAQ').first().json.data;\nconst wikiJson   = $('Wikipedia — Nasdaq 100').first().json;\nconst localData  = $('DataBursatil — Local').first().json;\nconst globalData = $('DataBursatil — Global').first().json;\n\nconst EXCHANGE_PRIORITY = {\n  NASDAQ: 1,\n  NYSE: 2,\n  NYSE_ARCA: 3,\n  BMV: 4,\n  BIVA: 5\n};\n\nfunction normalizeTicker(t) {\n  if (!t) return t;\n  return t.replace('.MX','').replace('*','').trim();\n}\n\n// ── Nasdaq 100 ────────────────────────────────────────────────\nconst wikiText = wikiJson.parse.wikitext[\"*\"];\nconst nasdaq100Matches = [...wikiText.matchAll(/\\|\\s*([A-Z]{1,5})\\s*\\|\\|/g)];\nconst nasdaq100 = [...new Set(nasdaq100Matches.map(m => m[1]))];\n\n// ── Parser CSV ────────────────────────────────────────────────\nfunction parseCSVFirstColumn(csv) {\n  if (!csv || typeof csv !== 'string') return [];\n  const lines = csv.split(/\\r?\\n/).slice(1);\n  const tickers = [];\n  for (const line of lines) {\n    const cleanLine = line.trim();\n    if (!cleanLine) continue;\n    let ticker = cleanLine.startsWith('\"')\n      ? cleanLine.split('\"')[1]\n      : cleanLine.split(',')[0];\n    if (ticker) {\n      ticker = ticker.trim();\n      if (/^[A-Z0-9.\\-]{1,8}$/.test(ticker)) tickers.push(ticker);\n    }\n  }\n  return tickers;\n}\n\nconst sp500  = parseCSVFirstColumn(sp500csv);\nconst nyse   = parseCSVFirstColumn(nysecsv);\nconst nasdaq = parseCSVFirstColumn(nasdaqcsv);\n\n// ── Tipos permitidos ──────────────────────────────────────────\nconst TIPOS_LOCALES_PERMITIDOS  = ['1', '1B', 'FI', 'FF', 'CI'];\nconst TIPOS_GLOBALES_PERMITIDOS = ['1A', '1I'];\n\n// ── Parser DataBursatil local ─────────────────────────────────\nfunction parseBMVLocal(data) {\n  const items = [];\n  for (const [ticker, series] of Object.entries(data)) {\n    for (const [serie, info] of Object.entries(series)) {\n      if (!TIPOS_LOCALES_PERMITIDOS.includes(info.tipo_valor_id)) continue;\n      if (info.estatus !== 'ACTIVA') continue;\n      const fullTicker = serie === '*' ? `${ticker}.MX` : `${ticker}${serie}.MX`;\n      items.push({\n        ticker:     fullTicker,\n        baseTicker: normalizeTicker(ticker),\n        exchange:   info.bolsa === 'BIVA' ? 'BIVA' : 'BMV',\n        isin:       info.isin || null,\n        name:       info.razon_social,\n        index_name: null\n      });\n      break;\n    }\n  }\n  return items;\n}\n\n// ── Parser DataBursatil global (SIC) ─────────────────────────\nfunction parseBMVGlobal(data) {\n  const items = [];\n  const exchangeMap = {\n    'NEW YORK STOCK EXCHANGE':              'NYSE',\n    'XNYS - NEW YORK STOCK EXCHANGE, INC.': 'NYSE',\n    'NASDAQ':                               'NASDAQ',\n    'XNAS - NASDAQ - ALL MARKETS':          'NASDAQ',\n    'LONDON STOCK EXCHANGE':                'LSE',\n    'XLON - LONDON STOCK EXCHANGE':         'LSE',\n    'FRANKFURT STOCK EXCHANGE':             'XETRA',\n    'XETRA':                                'XETRA',\n    'TOKIO STOCK EXCHANGE':                 'TSE',\n    'SIX SWISS EXCHANGE':                   'SIX',\n    'B Y M ESPAÑOLES':                      'BME',\n  };\n\n  for (const [ticker, series] of Object.entries(data)) {\n    for (const [serie, info] of Object.entries(series)) {\n      if (!TIPOS_GLOBALES_PERMITIDOS.includes(info.tipo_valor_id)) continue;\n      if (info.estatus !== 'ACTIVA') continue;\n\n      const esSIC = info.tipo_valor_descripcion?.includes('SISTEMA INTERNACIONAL');\n      const esETF = info.tipo_valor_descripcion?.includes('TRAC') ||\n                    info.tipo_valor_descripcion?.includes('ETF');\n\n      items.push({\n        ticker:     `${ticker}*`,\n        baseTicker: normalizeTicker(ticker),\n        exchange:   exchangeMap[info.bolsa] || info.bolsa,\n        market:     'SIC',\n        isin:       info.isin || null,\n        name:       info.razon_social,\n        index_name: esSIC ? 'sic_acciones' : esETF ? 'sic_etf' : 'sic'\n      });\n      break;\n    }\n  }\n  return items;\n}\n\n// ── ETFs curados ──────────────────────────────────────────────\nconst ETF_TICKERS = [\n  'SPY','QQQ','IWM','EFA','EEM','VTI','VEA','VWO','AGG','BND',\n  'GLD','SLV','USO','TLT','HYG','LQD','VNQ','XLF','XLK','XLE',\n  'IEMG','ACWI','URTH','MCHI','EWJ','EWZ','EWW','HEWW'\n];\n\nconst bmvLocal  = parseBMVLocal(localData);\nconst bmvGlobal = parseBMVGlobal(globalData);\n\nconst allItems = [\n  ...sp500.map(t       => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE',      isin: null, name: null, index_name: 'sp500'       })),\n  ...nasdaq100.map(t   => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NASDAQ',    isin: null, name: null, index_name: 'nasdaq_100'  })),\n  ...ETF_TICKERS.map(t => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE_ARCA', isin: null, name: null, index_name: 'etf_curated' })),\n  ...bmvLocal,\n  ...bmvGlobal,\n  ...nyse.map(t        => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE',      isin: null, name: null, index_name: null })),\n  ...nasdaq.map(t      => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NASDAQ',    isin: null, name: null, index_name: null })),\n];\n\n// ── Deduplicación de listings ─────────────────────────────────\nconst uniqueListings = new Map();\nfor (const item of allItems) {\n  const key = `${item.ticker}-${item.exchange}`;\n  if (!uniqueListings.has(key)) {\n    uniqueListings.set(key, item);\n  }\n}\n\nconst cleanItems = Array.from(uniqueListings.values());\n\n// ── Map agrupado por baseTicker ───────────────────────────────\nconst assetMap = new Map();\n\nfor (const item of cleanItems) {\n  const base = normalizeTicker(item.baseTicker || item.ticker);\n\n  if (!assetMap.has(base)) {\n    assetMap.set(base, {\n      baseTicker: base,\n      isin:       item.isin,\n      name:       item.name,\n      indices:    item.index_name ? [item.index_name] : [],\n      listings:   [{\n        ticker:     item.ticker,\n        exchange:   item.exchange,\n        is_primary: false  // ← se calcula al final\n      }]\n    });\n  } else {\n    const existing = assetMap.get(base);\n\n    if (!existing.isin && item.isin) existing.isin = item.isin;\n    if (!existing.name && item.name) existing.name = item.name;\n    if (item.index_name && !existing.indices.includes(item.index_name)) {\n      existing.indices.push(item.index_name);\n    }\n\n    const listingExists = existing.listings.some(\n      l => l.ticker === item.ticker && l.exchange === item.exchange\n    );\n    if (!listingExists) {\n      existing.listings.push({\n        ticker:     item.ticker,\n        exchange:   item.exchange,\n        is_primary: false\n      });\n    }\n  }\n}\n\n// ── Recalcula is_primary por prioridad ────────────────────────\nfor (const asset of assetMap.values()) {\n  let bestIndex = 0;\n  let bestPriority = 999;\n\n  asset.listings.forEach((l, i) => {\n    const p = EXCHANGE_PRIORITY[l.exchange] ?? 999;\n    if (p < bestPriority) {\n      bestPriority = p;\n      bestIndex = i;\n    }\n  });\n\n  asset.listings.forEach((l, i) => {\n    l.is_primary = (i === bestIndex);\n  });\n}\n\n// ── Modo prueba ───────────────────────────────────────────────\nconst TEST_MODE = true;\nconst TEST_LIMIT = 20;\n\nconst allAssets = Array.from(assetMap.values());\nconst output = TEST_MODE ? allAssets.slice(0, TEST_LIMIT) : allAssets;\n\n// ── Output ────────────────────────────────────────────────────\nconst result = [];\nfor (const asset of output) {\n  for (const listing of asset.listings) {\n    result.push({\n      json: {\n        baseTicker: asset.baseTicker,\n        isin:       asset.isin,\n        name:       asset.name,\n        indices:    asset.indices,\n        ticker:     listing.ticker,\n        exchange:   listing.exchange,\n        is_primary: listing.is_primary,  // ← ya lo tienes\n      }\n    });\n  }\n}\n\nconsole.log('AAPL listings:', JSON.stringify(assetMap.get('AAPL')?.listings));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -8096,
+        4592
+      ],
+      "id": "0d0670f9-729f-41f5-84ca-8c69a54d50a0",
+      "name": "Code in JavaScript",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -9392,
+        4592
+      ],
+      "id": "fe8c6c5b-2f46-4217-8e90-957ace952a43",
+      "name": "HTTP Request — S&P 500",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/nyse-other-listings/r/nyse-listed.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -9184,
+        4592
+      ],
+      "id": "4ec97003-ba15-4999-bdc7-63f6c1d808b6",
+      "name": "HTTP Request — NYSE",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/nasdaq-listings/r/nasdaq-listed-symbols.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8960,
+        4592
+      ],
+      "id": "7123c195-90da-4ee1-b55e-a11a839cadd8",
+      "name": "HTTP Request — NASDAQ",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://192.168.1.74:8001/info/batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"items\": {{ JSON.stringify($json.items) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -7232,
+        4576
+      ],
+      "id": "96e8bc0e-47f6-40fc-95ad-cbf6f7332cf5",
+      "name": "API — PUT /assets (Upsert)",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -7856,
+        4592
+      ],
+      "id": "cd8d0f91-c656-45a4-9d37-6b6caf6bd3e9",
+      "name": "Loop Over Items",
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        -7648,
+        4608
+      ],
+      "id": "6f62f352-6244-4043-8657-f2471b5a8b69",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => ({\n  ticker:   item.json.ticker,\n  exchange: item.json.exchange,\n  isin:     item.isin,\n  indices:  item.json.indices\n}));\n\nreturn { \n  json: { \n    items: items \n  } \n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7456,
+        4576
+      ],
+      "id": "1d3569e7-e133-4cce-8f90-4b507b17dedc",
+      "name": "Code in JavaScript1",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://en.wikipedia.org/w/api.php?action=parse&page=Nasdaq-100&prop=wikitext&format=json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8752,
+        4592
+      ],
+      "id": "c61ed05b-c06f-44dd-aebf-7065f105e784",
+      "name": "Wikipedia — Nasdaq 100",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const SECTOR_CODES = {\n  'Basic Materials':          'BASIC_MAT',\n  'Communication Services':   'COMM_SVC',\n  'Consumer Cyclical':        'CONS_CYCL',\n  'Consumer Defensive':       'CONS_DEF',\n  'Energy':                   'ENERGY',\n  'Financial Services':       'FIN_SVC',\n  'Healthcare':               'HEALTH',\n  'Industrials':              'INDUST',\n  'Real Estate':              'REAL_EST',\n  'Technology':               'TECH',\n  'Utilities':                'UTIL',\n  // BMV específicos\n  'Financial':                'FIN_SVC',\n  'Consumer Staples':         'CONS_DEF',\n  'Materials':                'BASIC_MAT',\n};\n\nconst data = $json.data;\n\nconst sectorsMap = {};\ndata\n  .filter(item => item.sector)\n  .forEach(item => {\n    const name = item.sector;\n    if (!sectorsMap[name]) {\n      sectorsMap[name] = SECTOR_CODES[name] || name.toUpperCase().replace(/\\s+/g, '_');\n    }\n  });\n\nconst sectors = Object.entries(sectorsMap)\n  .map(([name, code]) => ({ code, name }))\n  .sort((a, b) => a.name.localeCompare(b.name));\n\nreturn [{\n  json: {\n    total: sectors.length,\n    sectors: sectors\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7024,
+        4464
+      ],
+      "id": "cd207a5c-e66b-4a7d-a5bf-579f7b546889",
+      "name": "Code in JavaScript2",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "asset",
+          "mode": "list",
+          "cachedResultName": "asset"
+        },
+        "table": {
+          "__rl": true,
+          "value": "sectors",
+          "mode": "list",
+          "cachedResultName": "sectors"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "code",
+        "valueToMatchOn": "={{ $json.code }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "code",
+              "value": "={{ $json.code }}"
+            },
+            {
+              "column": "label",
+              "value": "={{ $json.name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -6624,
+        4464
+      ],
+      "id": "7fe160bf-20d2-4046-98fb-e0c2f3e19c6c",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "sectors",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -6816,
+        4464
+      ],
+      "id": "37083a6c-fbcd-400f-a913-264674a840c5",
+      "name": "Split Out",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "asset",
+          "mode": "list",
+          "cachedResultName": "asset"
+        },
+        "table": {
+          "__rl": true,
+          "value": "assets",
+          "mode": "list",
+          "cachedResultName": "assets"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "identifier",
+        "valueToMatchOn": "={{ $json.identifier }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "name",
+              "value": "={{ $json.name }}"
+            },
+            {
+              "column": "asset_class",
+              "value": "={{ $json.asset_class }}"
+            },
+            {
+              "column": "sector",
+              "value": "={{ $json.sector }}"
+            },
+            {
+              "column": "base_currency",
+              "value": "={{ $json.base_currency }}"
+            },
+            {
+              "column": "country",
+              "value": "={{ $json.country }}"
+            },
+            {
+              "column": "status",
+              "value": "={{ $json.status }}"
+            },
+            {
+              "column": "figi",
+              "value": "={{ $json.figi }}"
+            },
+            {
+              "column": "isin",
+              "value": "={{ $json.isin }}"
+            },
+            {
+              "column": "identifier_type",
+              "value": "={{ $json.identifier_type }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -6816,
+        4672
+      ],
+      "id": "8311326d-e473-4370-9df2-673ea902c1f0",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -7024,
+        4672
+      ],
+      "id": "a5cb89ed-ed7f-4270-b66e-90db620d15c1",
+      "name": "Split Out1",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const sp500csv  = $('HTTP Request — S&P 500').first().json.data;\nconst nysecsv   = $('HTTP Request — NYSE').first().json.data;\nconst nasdaqcsv = $('HTTP Request — NASDAQ').first().json.data;\n\nconst wikiJson  = $('Wikipedia — Nasdaq 100').first().json;\nconst wikiText  = wikiJson.parse.wikitext[\"*\"];\n\nconst nasdaq100Matches = [...wikiText.matchAll(/\\|\\s*([A-Z]{1,5})\\s*\\|\\|/g)];\nconst nasdaq100 = [...new Set(nasdaq100Matches.map(m => m[1]))];\n\nfunction parseCSVFirstColumn(csv) {\n  if (!csv || typeof csv !== 'string') return [];\n  const lines = csv.split(/\\r?\\n/).slice(1);\n  const tickers = [];\n  for (const line of lines) {\n    const cleanLine = line.trim();\n    if (!cleanLine) continue;\n    let ticker = cleanLine.startsWith('\"')\n      ? cleanLine.split('\"')[1]\n      : cleanLine.split(',')[0];\n    if (ticker) {\n      ticker = ticker.trim();\n      if (/^[A-Z0-9.\\-]{1,8}$/.test(ticker)) tickers.push(ticker);\n    }\n  }\n  return tickers;\n}\n\nconst sp500  = parseCSVFirstColumn(sp500csv);\nconst nyse   = parseCSVFirstColumn(nysecsv);\nconst nasdaq = parseCSVFirstColumn(nasdaqcsv);\n\n// ── Catálogos ────────────────────────────────────────────────\nconst ETF_TICKERS = [\n  'SPY','QQQ','IWM','EFA','EEM','VTI','VEA','VWO','AGG','BND',\n  'GLD','SLV','USO','TLT','HYG','LQD','VNQ','XLF','XLK','XLE',\n  'IEMG','ACWI','URTH','MCHI','EWJ','EWZ','EWW','HEWW'\n];\n\nconst BMV_IPC = [\n  'AC','ALFAA','ALSEA','AMXL','BBAJIOO','BIMBOA','BOLSAA',\n  'CEMEXCPO','CHDRAUIB','CUERVO','ELEKTRA','FEMSAUBD','GAPB',\n  'GCARSOA1','GCC','GENTERA','GFINBURO','GFNORTEO','GMEXICOB',\n  'GRUMAB','KIMBERA','KOFUBL','LIVEPOLC','MEGA','ORBIA',\n  'PE&OLES','PINFRA','Q','RA','TGSU1','TLEVISACPO','TS',\n  'VESTA','VOLARA','WALMEX'\n];\n\n// ✅ BMV_FIBRAS y BMV_MIDCAPS separados del IPC para evitar duplicados\nconst BMV_FIBRAS  = ['FUNO11','FIBRAMQ12','DANHOS13','PROLOGIS14','TERRA13','FMONTER14','NOVA12','EDUCA18','FCFE18','FINN13','FSHOP13'];\nconst BMV_MIDCAPS = ['HERDEZ','LACOMERUBC','ALPEKA','NEMAKA','ROTOPLAS','HCITY','AXTELCPO','GISSAA','GIGANTE','CYDSASAA','AUTLANB','CULTIBAB','AGUA'];\nconst BMV_ETFS    = ['NAFTRAC024','VMEX19'];\n\n// ── Construcción del listado (orden = prioridad de índice) ────\nconst allItems = [\n  // Índices con nombre explícito primero\n  ...sp500.map(t     => ({ ticker: t,        exchange: 'NYSE',      index_name: 'sp500'       })),\n  ...nasdaq100.map(t => ({ ticker: t,        exchange: 'NASDAQ',    index_name: 'nasdaq_100'  })),\n  ...BMV_IPC.map(t   => ({ ticker: `${t}.MX`, exchange: 'BMV',     index_name: 'bmv_ipc'     })),\n  ...ETF_TICKERS.map(t => ({ ticker: t,      exchange: 'NYSE_ARCA', index_name: 'etf_curated' })),\n\n  // Mercado general — sin índice, solo exchange\n  ...BMV_FIBRAS.map(t  => ({ ticker: `${t}.MX`, exchange: 'BMV',    index_name: 'bmv_fibras'  })),\n  ...BMV_MIDCAPS.map(t => ({ ticker: `${t}.MX`, exchange: 'BMV',    index_name: null          })),\n  ...BMV_ETFS.map(t    => ({ ticker: `${t}.MX`, exchange: 'BMV',    index_name: null          })),\n  ...nyse.map(t        => ({ ticker: t,          exchange: 'NYSE',   index_name: null          })),\n  ...nasdaq.map(t      => ({ ticker: t,          exchange: 'NASDAQ', index_name: null          })),\n];\n\n// ── Map deduplicado ───────────────────────────────────────────\nconst tickerMap = new Map();\n\nfor (const item of allItems) {\n  if (!tickerMap.has(item.ticker)) {\n    tickerMap.set(item.ticker, {\n      ticker:   item.ticker,\n      exchange: item.exchange,\n      indices:  item.index_name ? [item.index_name] : []\n    });\n  } else {\n    const existing = tickerMap.get(item.ticker);\n\n    // Acumula índices sin duplicar\n    if (item.index_name && !existing.indices.includes(item.index_name)) {\n      existing.indices.push(item.index_name);\n    }\n\n    // ✅ Corrige exchange: si era genérico, reemplaza con el específico\n    if (existing.exchange === 'NYSE' && item.exchange === 'NASDAQ') {\n      existing.exchange = 'NASDAQ'; // sp500 marcado como NYSE pero era NASDAQ\n    }\n  }\n}\n\n// ── Modo prueba ───────────────────────────────────────────────\nconst TEST_MODE = true;  // ← cambia a false para producción\nconst TEST_LIMIT = 10;\n\nconst allTickers = Array.from(tickerMap.values());\nconst output = TEST_MODE ? allTickers.slice(0, TEST_LIMIT) : allTickers;\n\nreturn output.map(item => ({\n  json: {\n    ticker:   item.ticker,\n    exchange: item.exchange,\n    indices:  item.indices\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -7776,
+        4144
+      ],
+      "id": "fd7a78b5-c984-4d77-a7bb-49a67cb86f5f",
+      "name": "Code in JavaScript3",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.databursatil.com/v2/emisoras?token=3127e7e93007f63c6e2e3b4a00d37c&mercado=local",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8512,
+        4592
+      ],
+      "id": "b5ea6311-63b8-4ea7-963d-0ca27dc76e6d",
+      "name": "DataBursatil — Local",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "url": "https://api.databursatil.com/v2/emisoras?token=3127e7e93007f63c6e2e3b4a00d37c&mercado=global",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -8304,
+        4592
+      ],
+      "id": "012a4408-e513-4d72-b10c-9de71e6ab019",
+      "name": "DataBursatil — Global",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "value": "asset",
+          "mode": "list",
+          "cachedResultName": "asset"
+        },
+        "table": {
+          "__rl": true,
+          "value": "asset_listings",
+          "mode": "list",
+          "cachedResultName": "asset_listings"
+        },
+        "dataMode": "defineBelow",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "asset_id",
+              "value": "={{ $json.asset_id }}"
+            },
+            {
+              "column": "exchange",
+              "value": "={{ $json.exchange }}"
+            },
+            {
+              "column": "ticker",
+              "value": "={{ $json.ticker }}"
+            },
+            {
+              "column": "currency",
+              "value": "={{ $json.currency }}"
+            },
+            {
+              "column": "is_primary",
+              "value": "={{ $json.is_primary }}"
+            },
+            {
+              "column": "provider",
+              "value": "={{ $json.provider }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log3",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -6432,
+        4672
+      ],
+      "id": "1e5050c3-3179-447f-b73e-e09a0fb06025",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      },
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Toma listings del input original (antes del Postgres)\nconst asset_id = $input.first().json.asset_id;  // del RETURNING *\nconst listings = $('Split Out1').first().json.listings; // ← del item original\n\nif (!listings || !Array.isArray(listings)) {\n  return [{ json: { error: \"no listings\", asset_id } }];\n}\n\nreturn listings.map(l => ({\n  json: {\n    asset_id:   asset_id,\n    ticker:     l.ticker,\n    exchange:   l.exchange,\n    currency:   l.currency,\n    is_primary: l.is_primary,\n    provider:   l.provider\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6720,
+        5008
+      ],
+      "id": "836c24bc-71c6-4cf7-b6ff-724be9df70ea",
+      "name": "Code in JavaScript4",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const assetId = $input.first().json.asset_id; // id recién generado\nconst listings = $('Split Out1').first().json.listings;\n\nreturn listings.map(listing => ({\n  json: {\n    asset_id: assetId,\n    ticker: listing.ticker,\n    exchange: listing.exchange,\n    currency: listing.currency,\n    is_primary: listing.is_primary,\n    provider: listing.provider,\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -6832,
+        4864
+      ],
+      "id": "f6315e3e-b1ce-4492-beb2-8182a27f8346",
+      "name": "Code in JavaScript5",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -7008,
+        4864
+      ],
+      "id": "dd396872-829a-48ac-9e9d-8d212d00949a",
+      "name": "Split Out2",
+      "disabled": true
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -20688,
+        10432
+      ],
+      "id": "f32632bc-39e7-40ad-b723-bdbf8444dd32",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recibe todos los assets (cada uno con asset_id y _listings_json)\n// Expande a un item por listing\nconst results = [];\n\nfor (const item of $input.all()) {\n  const assetId = item.json.asset_id;\n\n  if (!assetId) {\n    throw new Error('No se obtuvo asset_id. Campos: ' + Object.keys(item.json).join(', '));\n  }\n\n  let listings;\n  try {\n    listings = JSON.parse(item.json._listings_json);\n  } catch(e) {\n    throw new Error('Error parseando _listings_json para ' + assetId);\n  }\n\n  if (!listings || listings.length === 0) continue;\n\n  for (const listing of listings) {\n  results.push({\n    json: {\n      asset_id:   assetId,\n      ticker:     listing.ticker,\n      exchange:   listing.exchange,\n      currency:   listing.currency ?? null,\n      is_primary: listing.is_primary,\n      provider:   listing.provider ?? 'yahoo_finance',\n      market:     listing.market ?? listing.exchange,\n      indices:    JSON.stringify(listing.indices ?? [])\n    }\n  });\n  }\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -17568,
+        10512
+      ],
+      "id": "0406a699-5783-43e7-bf9e-1f96dd483e1e",
+      "name": "Merge — Add Listings Back"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Prepara el item para el upsert SQL.\n// Serializa listings como JSON string para que sobreviva el paso por Postgres.\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    name:            item.name,\n    asset_class:     item.asset_class,\n    sector:          item.sector,\n    base_currency:   item.base_currency,\n    country:         item.country,\n    status:          item.status,\n    figi:            item.figi,\n    isin:            item.isin,\n    identifier:      item.identifier,\n    identifier_type: item.identifier_type,\n    // listings serializado — sobrevive cualquier nodo\n    _listings_json: JSON.stringify(item.listings ?? [])\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -17936,
+        10512
+      ],
+      "id": "2d3a8967-7c34-4477-8289-b594808aba95",
+      "name": "Carry — Listings Passthrough"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Inputs externos ───────────────────────────────────────────\nconst sp500csv   = $('HTTP Request — S&P ').first().json.data;\nconst nysecsv    = $('HTTP Request — NYSE1').first().json.data;\nconst nasdaqcsv  = $('HTTP Request — NASDAQ1').first().json.data;\nconst wikiJson   = $('Wikipedia — Nasdaq ').first().json;\nconst localData  = $('DataBursatil — Local1').first().json;\nconst globalData = $('DataBursatil — Global1').first().json;\n\nconst EXCHANGE_PRIORITY = {\n  NASDAQ: 1,\n  NYSE: 2,\n  NYSE_ARCA: 3,\n  BMV: 4,\n  BIVA: 5\n};\n\nfunction normalizeTicker(t) {\n  if (!t) return t;\n  return t.replace('.MX','').replace('*','').trim();\n}\n\n// ── Nasdaq 100 ────────────────────────────────────────────────\nconst wikiText = wikiJson.parse.wikitext[\"*\"];\nconst nasdaq100Matches = [...wikiText.matchAll(/\\|\\s*([A-Z]{1,5})\\s*\\|\\|/g)];\nconst nasdaq100 = [...new Set(nasdaq100Matches.map(m => m[1]))];\n\n// ── Parser CSV ────────────────────────────────────────────────\nfunction parseCSVFirstColumn(csv) {\n  if (!csv || typeof csv !== 'string') return [];\n  const lines = csv.split(/\\r?\\n/).slice(1);\n  const tickers = [];\n  for (const line of lines) {\n    const cleanLine = line.trim();\n    if (!cleanLine) continue;\n    let ticker = cleanLine.startsWith('\"')\n      ? cleanLine.split('\"')[1]\n      : cleanLine.split(',')[0];\n    if (ticker) {\n      ticker = ticker.trim();\n      if (/^[A-Z0-9.\\-]{1,8}$/.test(ticker)) tickers.push(ticker);\n    }\n  }\n  return tickers;\n}\n\nconst sp500  = parseCSVFirstColumn(sp500csv);\nconst nyse   = parseCSVFirstColumn(nysecsv);\nconst nasdaq = parseCSVFirstColumn(nasdaqcsv);\n\n// ── Tipos permitidos ──────────────────────────────────────────\nconst TIPOS_LOCALES_PERMITIDOS  = ['1', '1B', 'FI', 'FF', 'CI'];\nconst TIPOS_GLOBALES_PERMITIDOS = ['1A', '1I'];\n\n// ── Parser DataBursatil local ─────────────────────────────────\nfunction parseBMVLocal(data) {\n  const items = [];\n  for (const [ticker, series] of Object.entries(data)) {\n    for (const [serie, info] of Object.entries(series)) {\n      if (!TIPOS_LOCALES_PERMITIDOS.includes(info.tipo_valor_id)) continue;\n      if (info.estatus !== 'ACTIVA') continue;\n      const fullTicker = serie === '*' ? `${ticker}.MX` : `${ticker}${serie}.MX`;\n      items.push({\n        ticker:     fullTicker,\n        baseTicker: normalizeTicker(ticker),\n        exchange:   info.bolsa === 'BIVA' ? 'BIVA' : 'BMV',\n        isin:       info.isin || null,\n        name:       info.razon_social,\n        index_name: null\n      });\n      break;\n    }\n  }\n  return items;\n}\n\n// ── Parser DataBursatil global (SIC) ─────────────────────────\nfunction parseBMVGlobal(data) {\n  const items = [];\n  const exchangeMap = {\n    'NEW YORK STOCK EXCHANGE':              'NYSE',\n    'XNYS - NEW YORK STOCK EXCHANGE, INC.': 'NYSE',\n    'NASDAQ':                               'NASDAQ',\n    'XNAS - NASDAQ - ALL MARKETS':          'NASDAQ',\n    'LONDON STOCK EXCHANGE':                'LSE',\n    'XLON - LONDON STOCK EXCHANGE':         'LSE',\n    'FRANKFURT STOCK EXCHANGE':             'XETRA',\n    'XETRA':                                'XETRA',\n    'TOKIO STOCK EXCHANGE':                 'TSE',\n    'SIX SWISS EXCHANGE':                   'SIX',\n    'B Y M ESPAÑOLES':                      'BME',\n  };\n\n  for (const [ticker, series] of Object.entries(data)) {\n    for (const [serie, info] of Object.entries(series)) {\n      if (!TIPOS_GLOBALES_PERMITIDOS.includes(info.tipo_valor_id)) continue;\n      if (info.estatus !== 'ACTIVA') continue;\n\n      const esSIC = info.tipo_valor_descripcion?.includes('SISTEMA INTERNACIONAL');\n      const esETF = info.tipo_valor_descripcion?.includes('TRAC') ||\n                    info.tipo_valor_descripcion?.includes('ETF');\n\n      items.push({\n        ticker:     `${ticker}*`,\n        baseTicker: normalizeTicker(ticker),\n        exchange:   exchangeMap[info.bolsa] || info.bolsa,\n        market:     'SIC',\n        isin:       info.isin || null,\n        name:       info.razon_social,\n        index_name: esSIC ? 'sic_acciones' : esETF ? 'sic_etf' : 'sic'\n      });\n      break;\n    }\n  }\n  return items;\n}\n\n// ── ETFs curados ──────────────────────────────────────────────\nconst ETF_TICKERS = [\n  'SPY','QQQ','IWM','EFA','EEM','VTI','VEA','VWO','AGG','BND',\n  'GLD','SLV','USO','TLT','HYG','LQD','VNQ','XLF','XLK','XLE',\n  'IEMG','ACWI','URTH','MCHI','EWJ','EWZ','EWW','HEWW'\n];\n\nconst bmvLocal  = parseBMVLocal(localData);\nconst bmvGlobal = parseBMVGlobal(globalData);\n\nconst allItems = [\n  ...sp500.map(t       => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE',      isin: null, name: null, index_name: 'sp500'       })),\n  ...nasdaq100.map(t   => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NASDAQ',    isin: null, name: null, index_name: 'nasdaq_100'  })),\n  ...ETF_TICKERS.map(t => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE_ARCA', isin: null, name: null, index_name: 'etf_curated' })),\n  ...bmvLocal,\n  ...bmvGlobal,\n  ...nyse.map(t        => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NYSE',      isin: null, name: null, index_name: null })),\n  ...nasdaq.map(t      => ({ ticker: t, baseTicker: normalizeTicker(t), exchange: 'NASDAQ',    isin: null, name: null, index_name: null })),\n];\n\n// ── Deduplicación de listings ─────────────────────────────────\n// ← CORRECCIÓN: indices_list se inicializa correctamente desde el inicio\nconst uniqueListings = new Map();\nfor (const item of allItems) {\n  const key = `${item.ticker}-${item.exchange}`;\n  if (!uniqueListings.has(key)) {\n    uniqueListings.set(key, {\n      ...item,\n      indices_list: item.index_name ? [item.index_name] : []\n    });\n  } else {\n    const existing = uniqueListings.get(key);\n    if (item.index_name && !existing.indices_list.includes(item.index_name)) {\n      existing.indices_list.push(item.index_name);\n    }\n  }\n}\n\n// ← Ya no necesita .map() de normalización\nconst cleanItems = Array.from(uniqueListings.values());\n\n// ── Map agrupado por baseTicker ───────────────────────────────\nconst assetMap = new Map();\n\nfor (const item of cleanItems) {\n  const base = normalizeTicker(item.baseTicker || item.ticker);\n\n  if (!assetMap.has(base)) {\n    assetMap.set(base, {\n      baseTicker: base,\n      isin:       item.isin,\n      name:       item.name,\n      listings:   [{\n        ticker:     item.ticker,\n        exchange:   item.exchange,\n        indices:    item.indices_list,\n        is_primary: false\n      }]\n    });\n  } else {\n    const existing = assetMap.get(base);\n\n    if (!existing.isin && item.isin) existing.isin = item.isin;\n    if (!existing.name && item.name) existing.name = item.name;\n\n    // ← CORRECCIÓN: busca listing por ticker únicamente, sin importar exchange\n    const existingListing = existing.listings.find(l => l.ticker === item.ticker);\n\n    if (!existingListing) {\n      existing.listings.push({\n        ticker:     item.ticker,\n        exchange:   item.exchange,\n        indices:    item.indices_list,\n        is_primary: false\n      });\n    } else {\n      // Ya existe el listing — fusiona indices\n      for (const idx of item.indices_list) {\n        if (!existingListing.indices.includes(idx)) {\n          existingListing.indices.push(idx);\n        }\n      }\n    }\n  }\n}\n\n// ── Recalcula is_primary por prioridad ────────────────────────\nfor (const asset of assetMap.values()) {\n  let bestIndex    = 0;\n  let bestPriority = 999;\n\n  asset.listings.forEach((l, i) => {\n    const p = EXCHANGE_PRIORITY[l.exchange] ?? 999;\n    if (p < bestPriority) {\n      bestPriority = p;\n      bestIndex    = i;\n    }\n  });\n\n  asset.listings.forEach((l, i) => {\n    l.is_primary = (i === bestIndex);\n  });\n}\n\n// ── Modo prueba ───────────────────────────────────────────────\nconst TEST_MODE = true;\nconst TEST_LIMIT = 20;\n\nconst allAssets = Array.from(assetMap.values());\nconst output = TEST_MODE ? allAssets.slice(0, TEST_LIMIT) : allAssets;\n\n// ── Output ────────────────────────────────────────────────────\nconst result = [];\nfor (const asset of output) {\n  for (const listing of asset.listings) {\n    console.log(`LISTING ticker=${listing.ticker.padEnd(15)} indices=${JSON.stringify(listing.indices)}`);\n\n    const esMercadoMX = listing.ticker.endsWith('*') || listing.ticker.endsWith('.MX');\n\n    const indicesFiltrados = listing.indices.filter(idx =>\n      esMercadoMX ? idx.startsWith('sic') : !idx.startsWith('sic')\n    );\n\n    result.push({\n      json: {\n        baseTicker: asset.baseTicker,\n        isin:       asset.isin,\n        name:       asset.name,\n        ticker:     listing.ticker,\n        exchange:   listing.exchange,\n        indices:    indicesFiltrados,\n        is_primary: listing.is_primary,\n      }\n    });\n  }\n}\n\nconsole.log('AAPL listings:', JSON.stringify(assetMap.get('AAPL')?.listings));\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -19184,
+        10432
+      ],
+      "id": "23d280cf-f657-40b8-87a2-b06f2685034e",
+      "name": "Code in JavaScript6"
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/s-and-p-500-companies/r/constituents.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -20480,
+        10432
+      ],
+      "id": "44e815fb-c5e2-454e-beb7-7b6cf4d91f12",
+      "name": "HTTP Request — S&P "
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/nyse-other-listings/r/nyse-listed.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -20272,
+        10432
+      ],
+      "id": "c106e1aa-7d90-44ea-8e99-334c44162fc9",
+      "name": "HTTP Request — NYSE1"
+    },
+    {
+      "parameters": {
+        "url": "https://datahub.io/core/nasdaq-listings/r/nasdaq-listed-symbols.csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -20048,
+        10432
+      ],
+      "id": "ad63a6af-b7df-40e2-8f65-b5f582a50a26",
+      "name": "HTTP Request — NASDAQ1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://192.168.1.74:8001/info/batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"items\": {{ JSON.stringify($json.items) }}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -18320,
+        10416
+      ],
+      "id": "bc928697-99cf-4062-81f3-e436d8134dde",
+      "name": "API — PUT /assets (Upsert)1"
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -18944,
+        10432
+      ],
+      "id": "5af781fb-91c2-4788-b23a-48d0e92a46bf",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me1",
+      "typeVersion": 1,
+      "position": [
+        -18736,
+        10448
+      ],
+      "id": "14971836-8415-4efb-ba15-004b74f79c7b"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => ({\n  ticker:   item.json.ticker,\n  exchange: item.json.exchange,\n  isin:     item.json.isin,\n  indices:  item.json.indices\n}));\n\nreturn { \n  json: { \n    items: items \n  } \n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -18544,
+        10416
+      ],
+      "id": "e24e360b-8499-43b4-a0ee-3cc72c4f3cfa",
+      "name": "Code in JavaScript7"
+    },
+    {
+      "parameters": {
+        "url": "https://en.wikipedia.org/w/api.php?action=parse&page=Nasdaq-100&prop=wikitext&format=json",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -19840,
+        10432
+      ],
+      "id": "2bf7d68e-63ce-453b-bf5d-551d21a818f4",
+      "name": "Wikipedia — Nasdaq "
+    },
+    {
+      "parameters": {
+        "jsCode": "const SECTOR_CODES = {\n  'Basic Materials':          'BASIC_MAT',\n  'Communication Services':   'COMM_SVC',\n  'Consumer Cyclical':        'CONS_CYCL',\n  'Consumer Defensive':       'CONS_DEF',\n  'Energy':                   'ENERGY',\n  'Financial Services':       'FIN_SVC',\n  'Healthcare':               'HEALTH',\n  'Industrials':              'INDUST',\n  'Real Estate':              'REAL_EST',\n  'Technology':               'TECH',\n  'Utilities':                'UTIL',\n  // BMV específicos\n  'Financial':                'FIN_SVC',\n  'Consumer Staples':         'CONS_DEF',\n  'Materials':                'BASIC_MAT',\n};\n\nconst data = $json.data;\n\nconst sectorsMap = {};\ndata\n  .filter(item => item.sector)\n  .forEach(item => {\n    const name = item.sector;\n    if (!sectorsMap[name]) {\n      sectorsMap[name] = SECTOR_CODES[name] || name.toUpperCase().replace(/\\s+/g, '_');\n    }\n  });\n\nconst sectors = Object.entries(sectorsMap)\n  .map(([name, code]) => ({ code, name }))\n  .sort((a, b) => a.name.localeCompare(b.name));\n\nreturn [{\n  json: {\n    total: sectors.length,\n    sectors: sectors\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -18112,
+        10304
+      ],
+      "id": "6e525f90-73c5-428b-80a8-5315c615cc45",
+      "name": "Code in JavaScript8"
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "schema": {
+          "__rl": true,
+          "value": "asset",
+          "mode": "list",
+          "cachedResultName": "asset"
+        },
+        "table": {
+          "__rl": true,
+          "value": "sectors",
+          "mode": "list",
+          "cachedResultName": "sectors"
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "code",
+        "valueToMatchOn": "={{ $json.code }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "code",
+              "value": "={{ $json.code }}"
+            },
+            {
+              "column": "label",
+              "value": "={{ $json.name }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log5",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -17712,
+        10304
+      ],
+      "id": "379334f6-8228-451a-81d8-0e30e842dbfc",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "sectors",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -17904,
+        10304
+      ],
+      "id": "147c24ae-cd7e-49e8-b977-49059666fb7a",
+      "name": "Split Out3"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO asset.assets (name, asset_class, sector, base_currency, country, status, figi, isin, identifier, identifier_type) VALUES ('{{ $json.name }}', '{{ $json.asset_class }}', '{{ $json.sector }}', '{{ $json.base_currency }}', '{{ $json.country }}', '{{ $json.status }}', {{ $json.figi ? \"'\" + $json.figi + \"'\" : 'NULL' }}, {{ $json.isin ? \"'\" + $json.isin + \"'\" : 'NULL' }}, '{{ $json.identifier }}', '{{ $json.identifier_type }}') ON CONFLICT (identifier) DO UPDATE SET name = EXCLUDED.name, asset_class = EXCLUDED.asset_class, sector = EXCLUDED.sector, base_currency = EXCLUDED.base_currency, country = EXCLUDED.country, status = EXCLUDED.status, figi = EXCLUDED.figi, isin = EXCLUDED.isin, identifier_type = EXCLUDED.identifier_type RETURNING asset_id, '{{ $json._listings_json.replace(/'/g, \"''\") }}'::text AS _listings_json",
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log6",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -17760,
+        10512
+      ],
+      "id": "ab03d135-ba04-4c49-9b7a-b3bba8fcdc19",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -18112,
+        10512
+      ],
+      "id": "6d03b74c-c02a-40a1-848c-4120e9d818e3",
+      "name": "Split Out4"
+    },
+    {
+      "parameters": {
+        "url": "https://api.databursatil.com/v2/emisoras?token=3127e7e93007f63c6e2e3b4a00d37c&mercado=local",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -19600,
+        10432
+      ],
+      "id": "50063670-0345-42e4-8b55-76aecc67b6cb",
+      "name": "DataBursatil — Local1"
+    },
+    {
+      "parameters": {
+        "url": "https://api.databursatil.com/v2/emisoras?token=3127e7e93007f63c6e2e3b4a00d37c&mercado=global",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Quantfolio/1.0 n8n-workflow"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -19392,
+        10432
+      ],
+      "id": "dc8a43aa-f1e0-4e79-9cf6-f3a3add0807b",
+      "name": "DataBursatil — Global1"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO asset.asset_listings \n  (asset_id, ticker, exchange, currency, is_primary, provider, indices)\nVALUES (\n  '{{ $json.asset_id }}',\n  '{{ $json.ticker }}',\n  '{{ $json.exchange }}',\n  '{{ $json.currency }}',\n  {{ $json.is_primary }},\n  '{{ $json.provider }}',\n  '{{ $json.indices }}'::jsonb\n)\nON CONFLICT (exchange, ticker) \nDO UPDATE SET\n  asset_id   = EXCLUDED.asset_id,\n  currency   = EXCLUDED.currency,\n  is_primary = EXCLUDED.is_primary,\n  provider   = EXCLUDED.provider,\n  indices    = EXCLUDED.indices;",
+        "options": {}
+      },
+      "name": "Postgres — Write Sync Log7",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        -17376,
+        10512
+      ],
+      "id": "25031e3a-edd9-4bc1-9512-3bb105918581",
+      "credentials": {
+        "postgres": {
+          "id": "1XjYRn8tKrdPeuLo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Build — All Tickers": {
+      "main": [
+        []
+      ]
+    },
+    "yFinance Service — Fetch Info": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Map",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Map": {
+      "main": [
+        [
+          {
+            "node": "Guard — Valid Payload?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard — Valid Payload?": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Log — Skipped Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API — POST /assets (Create)": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log — Skipped Invalid": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger — Every Monday 6am1": {
+      "main": [
+        []
+      ]
+    },
+    "HTTP Request — S&P 500": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — NYSE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — NYSE": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — NASDAQ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — NASDAQ": {
+      "main": [
+        [
+          {
+            "node": "Wikipedia — Nasdaq 100",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "API — PUT /assets (Upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wikipedia — Nasdaq 100": {
+      "main": [
+        [
+          {
+            "node": "DataBursatil — Local",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API — PUT /assets (Upsert)": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Out1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — Write Sync Log1": {
+      "main": [
+        []
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out1": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataBursatil — Local": {
+      "main": [
+        [
+          {
+            "node": "DataBursatil — Global",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataBursatil — Global": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — Write Sync Log2": {
+      "main": [
+        [
+          {
+            "node": "Split Out2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — Write Sync Log3": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        []
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out2": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — S&P ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge — Add Listings Back": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Carry — Listings Passthrough": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript6": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — S&P ": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — NYSE1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — NYSE1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request — NASDAQ1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request — NASDAQ1": {
+      "main": [
+        [
+          {
+            "node": "Wikipedia — Nasdaq ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API — PUT /assets (Upsert)1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript8",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split Out4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Replace Me1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Replace Me1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Code in JavaScript7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript7": {
+      "main": [
+        [
+          {
+            "node": "API — PUT /assets (Upsert)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wikipedia — Nasdaq ": {
+      "main": [
+        [
+          {
+            "node": "DataBursatil — Local1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript8": {
+      "main": [
+        [
+          {
+            "node": "Split Out3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out3": {
+      "main": [
+        [
+          {
+            "node": "Postgres — Write Sync Log5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres — Write Sync Log6": {
+      "main": [
+        [
+          {
+            "node": "Merge — Add Listings Back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out4": {
+      "main": [
+        [
+          {
+            "node": "Carry — Listings Passthrough",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataBursatil — Local1": {
+      "main": [
+        [
+          {
+            "node": "DataBursatil — Global1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DataBursatil — Global1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript6",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "9effeaf6-3051-4864-b4ec-9372717615e4",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fc1afefbcb19bc0ba7fa20b30ab2cee5dab39d8896031153292976c74c1d15f9"
+  },
+  "id": "xWg3Kq7i8gGQhpsy",
+  "tags": []
+}
